@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
+	"strings"
 )
 
 func replicate(n *maelstrom.Node, dest string, message int) {
@@ -40,7 +41,6 @@ func main() {
 
 	var mu sync.Mutex
 	messages := map[int]struct{}{}
-	var neighbors []string
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		var body struct {
@@ -58,12 +58,14 @@ func main() {
 		if !seen {
 			messages[body.Message] = struct{}{}
 		}
-		dests := append([]string(nil), neighbors...)
 		mu.Unlock()
 
-		if !seen {
-			for _, dest := range dests {
-				go replicate(n, dest, body.Message)
+		if !seen  && strings.HasPrefix(msg.Src, "c") {
+			for _, id := range n.NodeIDs() {
+				if id == n.ID() {
+					continue
+				}
+				go replicate(n, id, body.Message)
 			}
 		}
 
@@ -100,9 +102,6 @@ func main() {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		mu.Lock()
-		neighbors = body.Topology[n.ID()]
-		mu.Unlock()
 
 		return n.Reply(msg, map[string]any {
 			"type": "topology_ok",
