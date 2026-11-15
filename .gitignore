@@ -1,0 +1,41 @@
+# Compiled binaries (each module is named after its directory,
+# so `go build` drops a binary with the same name inside it)
+/maelstrom-echo/maelstrom-echo
+/maelstrom-unique-ids/maelstrom-unique-ids
+/maelstrom-broadcast/maelstrom-broadcast
+
+# Maelstrom run output / store logs
+*-output.txt
+*-stderr.txt
+store/
+*.log
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories (uncomment to vendor)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Env files
+.env
