@@ -4,9 +4,36 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+func replicate(n *maelstrom.Node, dest string, message int) {
+	body := map[string]any {
+		"type": "broadcast",
+		"message": message,
+	}
+	for {
+		ack := make(chan struct{})
+		var once sync.Once
+
+		err := n.RPC(dest, body, func(maelstrom.Message) error {
+			once.Do(func() { close(ack)})
+			return nil
+		})
+
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		select {
+			case <-ack:
+				return
+			case <-time.After(time.Second):
+				continue
+		}
+	}
+}
 
 func main() {
 	n := maelstrom.NewNode()
@@ -36,12 +63,7 @@ func main() {
 
 		if !seen {
 			for _, dest := range dests {
-				if err := n.Send(dest, map[string]any {
-					"type": "broadcast",
-					"message": body.Message,
-				}); err != nil {
-					return err
-				}
+				go replicate(n, dest, body.Message)
 			}
 		}
 
