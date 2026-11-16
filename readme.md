@@ -1,4 +1,6 @@
-# Concepts across the challenges
+# Distributed Systems Challenges from Fly.io
+
+* https://fly.io/dist-sys/
 
 Every challenge is the same kind of program. A node reads a JSON message, updates state, and writes a JSON message. Each one adds a constraint: identity, memory, dissemination, faults, cost, a shared total order, then transactions that stay available while the network is cut.
 
