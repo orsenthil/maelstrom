@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sync"
@@ -13,12 +14,51 @@ type entry struct {
 	msg    int
 }
 
+func appendLog(ctx context.Context, kv *maelstrom.KV, key string, msg int) int {
+	for {
+		var log [][2]int
+		err := kv.ReadInto(ctx, "log:"+key, &log)
+		if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+			log = nil
+		} else if err != nil {
+			continue
+		}
+
+		offset := len(log)
+		next := make([][2]int, offset+1)
+		copy(next, log)
+		next[offset] = [2]int{offset, msg}
+
+		err = kv.CompareAndSwap(ctx, "log:"+key, log, next, true)
+		if err == nil {
+			return offset
+		}
+	}
+}
+
+func commitOffset(ctx context.Context, kv *maelstrom.KV, key string, off int) {
+	for {
+		current, err := kv.ReadInt(ctx, "commit:"+key)
+		if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+			current = -1
+		} else if err != nil {
+			continue
+		}
+		if off <= current {
+			return
+		}
+		if kv.CompareAndSwap(ctx, "commit:"+key, current, off, true) == nil {
+			return
+		}
+	}
+}
+
 func main() {
 	n := maelstrom.NewNode()
+	kv := maelstrom.NewLinKV(n)
+	ctx := context.Background()
 
 	var mu sync.Mutex
-	logs := map[string][]entry{}
-	commits := map[string]int{}
 
 	n.Handle("send", func(msg maelstrom.Message) error {
 		var body struct {
@@ -30,8 +70,7 @@ func main() {
 		}
 
 		mu.Lock()
-		offset := len(logs[body.Key])
-		logs[body.Key] = append(logs[body.Key], entry{offset, body.Msg})
+		offset := appendLog(ctx, kv, body.Key, body.Msg)
 		mu.Unlock()
 
 		return n.Reply(msg, map[string]any{
@@ -49,14 +88,28 @@ func main() {
 		}
 
 		mu.Lock()
+
 		msgs := map[string][][2]int{}
+
 		for key, from := range body.Offsets {
-			for _, e := range logs[key] {
-				if e.offset >= from {
-					msgs[key] = append(msgs[key], [2]int{e.offset, e.msg})
+			var entries [][2]int
+			for {
+				err := kv.ReadInto(ctx, "log:"+key, &entries)
+				if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+					entries = nil
+					break
+				}
+				if err == nil {
+					break
+				}
+			}
+			for _, pair := range entries {
+				if pair[0] >= from {
+					msgs[key] = append(msgs[key], pair)
 				}
 			}
 		}
+
 		mu.Unlock()
 
 		return n.Reply(msg, map[string]any{
@@ -75,9 +128,7 @@ func main() {
 
 		mu.Lock()
 		for key, off := range body.Offsets {
-			if prev, ok := commits[key]; !ok || off > prev {
-				commits[key] = off
-			}
+			commitOffset(ctx, kv, key, off)
 		}
 		mu.Unlock()
 
@@ -93,12 +144,23 @@ func main() {
 		}
 
 		mu.Lock()
+
 		offsets := map[string]int{}
+
 		for _, key := range body.Keys {
-			if off, ok := commits[key]; ok {
+			for {
+				off, err := kv.ReadInt(ctx, "commit:"+key)
+				if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+					break
+				}
+				if err != nil {
+					continue
+				}
 				offsets[key] = off
+				break
 			}
 		}
+
 		mu.Unlock()
 
 		return n.Reply(msg, map[string]any{
