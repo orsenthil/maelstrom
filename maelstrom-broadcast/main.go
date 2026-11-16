@@ -4,42 +4,35 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
-	"time"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
-	"strings"
+	"sort"
 )
 
-func replicate(n *maelstrom.Node, dest string, message int) {
-	body := map[string]any {
-		"type": "broadcast",
-		"message": message,
-	}
-	for {
-		ack := make(chan struct{})
-		var once sync.Once
+func treeNeighbors(n *maelstrom.Node) [] string {
+	ids := append([]string(nil), n.NodeIDs()...)
+	sort.Strings(ids)
 
-		err := n.RPC(dest, body, func(maelstrom.Message) error {
-			once.Do(func() { close(ack)})
-			return nil
-		})
-
-		if err != nil {
-			time.Sleep(time.Second)
-			continue
-		}
-		select {
-			case <-ack:
-				return
-			case <-time.After(time.Second):
-				continue
-		}
+	i := 0
+	for i < len(ids) && ids[i] != n.ID() {
+		i++
 	}
+	var out []string
+	if i > 0 {
+		out = append(out, ids[(i-1) / 4])
+	}
+	for child := 4 * i + 1; child <= 4 * i + 4 && child < len(ids); child++ {
+		out = append(out, ids[child])
+	}
+	return out
 }
+
 
 func main() {
 	n := maelstrom.NewNode()
 
 	var mu sync.Mutex
+	var neighbors []string
+	var once sync.Once
 	messages := map[int]struct{}{}
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
@@ -60,12 +53,21 @@ func main() {
 		}
 		mu.Unlock()
 
-		if !seen  && strings.HasPrefix(msg.Src, "c") {
-			for _, id := range n.NodeIDs() {
-				if id == n.ID() {
+		once.Do(func() {
+			neighbors = treeNeighbors(n)
+		})
+
+		if !seen {
+			for _, dest := range neighbors {
+				if dest  == msg.Src {
 					continue
 				}
-				go replicate(n, id, body.Message)
+				if err := n.Send(dest, map[string]any {
+					"type": "broadcast",
+					"message": body.Message,
+				}); err != nil {
+					return err
+				}
 			}
 		}
 
